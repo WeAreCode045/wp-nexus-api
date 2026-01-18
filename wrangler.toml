@@ -14,5 +14,10 @@ NODE_VERSION = "18"
 [placement]
 mode = "smart"
 
+[observability]
+[observability.logs]
+enabled = false
+invocation_logs = true
+
 # Gebruik 'wrangler secret put AUTH_TOKEN' om de token veilig op te slaan:
 # N02eunReoZnUCxIVqOlhLf8Alt1ztCUJvoMA48Im
