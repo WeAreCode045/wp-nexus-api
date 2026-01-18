@@ -15,9 +15,19 @@ NODE_VERSION = "18"
 mode = "smart"
 
 [observability]
-[observability.logs]
 enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
 invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
 
 # Gebruik 'wrangler secret put AUTH_TOKEN' om de token veilig op te slaan:
 # N02eunReoZnUCxIVqOlhLf8Alt1ztCUJvoMA48Im
