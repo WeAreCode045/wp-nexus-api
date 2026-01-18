@@ -32,9 +32,13 @@ export default {
       });
     }
 
-    const sql = postgres(env.DB_URL || 'postgres://postgres:hubwp001!@cp.code045.nl:54301/wphub', {
+    // Gebruik de omgevingsvariabele of de hardcoded fallback
+    const connectionString = env.DB_URL || 'postgres://postgres:hubwp001!@cp.code045.nl:54301/wphub';
+    
+    const sql = postgres(connectionString, {
       ssl: false,
       connect_timeout: 10,
+      max: 1 // Belangrijk voor serverless om connectie-leaks te voorkomen
     });
 
     try {
@@ -43,7 +47,7 @@ export default {
           const dbCheck = await sql`SELECT 1 as connected`;
           return new Response(JSON.stringify({ 
             status: 'online', 
-            version: '2.1.0',
+            version: '2.1.1',
             database: dbCheck[0].connected ? 'connected' : 'error'
           }), { headers: corsHeaders });
         } catch (dbError: any) {
@@ -51,46 +55,70 @@ export default {
         }
       }
 
-      // --- NEW: Database Setup Endpoint ---
+      // --- Database Setup Endpoint ---
       if (url.pathname === '/setup-db' && method === 'POST') {
-        await sql`
-          CREATE TABLE IF NOT EXISTS sites (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            domain TEXT NOT NULL,
-            site_name TEXT NOT NULL,
-            username TEXT NOT NULL,
-            app_password TEXT NOT NULL,
-            status TEXT DEFAULT 'online',
-            wp_version TEXT
-          );
-        `;
-        await sql`
-          CREATE TABLE IF NOT EXISTS library (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            type TEXT NOT NULL,
-            file_name TEXT NOT NULL,
-            file_size TEXT NOT NULL,
-            upload_date TEXT NOT NULL
-          );
-        `;
-        await sql`
-          CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
-            sender_id TEXT NOT NULL,
-            receiver_id TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            content TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            read BOOLEAN DEFAULT FALSE
-          );
-        `;
-        return new Response(JSON.stringify({ success: true, message: 'Tabellen succesvol aangemaakt of reeds aanwezig.' }), { headers: corsHeaders });
+        try {
+          // Fix: Execute table creation sequentially to avoid type issues with TransactionSql which was reported as not callable.
+          // Removed sql.begin as the transaction object's type signature was causing TypeScript errors in this environment.
+          await sql`
+            CREATE TABLE IF NOT EXISTS sites (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              domain TEXT NOT NULL,
+              site_name TEXT NOT NULL,
+              username TEXT NOT NULL,
+              app_password TEXT NOT NULL,
+              status TEXT DEFAULT 'online',
+              wp_version TEXT
+            );
+          `;
+          await sql`
+            CREATE TABLE IF NOT EXISTS library (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              name TEXT NOT NULL,
+              type TEXT NOT NULL,
+              file_name TEXT NOT NULL,
+              file_size TEXT NOT NULL,
+              upload_date TEXT NOT NULL
+            );
+          `;
+          await sql`
+            CREATE TABLE IF NOT EXISTS messages (
+              id TEXT PRIMARY KEY,
+              sender_id TEXT NOT NULL,
+              receiver_id TEXT NOT NULL,
+              subject TEXT NOT NULL,
+              content TEXT NOT NULL,
+              timestamp TEXT NOT NULL,
+              read BOOLEAN DEFAULT FALSE
+            );
+          `;
+          
+          return new Response(JSON.stringify({ 
+            success: true, 
+            message: 'Database schema succesvol geinitialiseerd.' 
+          }), { headers: corsHeaders });
+        } catch (sqlError: any) {
+          console.error("SQL Setup Error:", sqlError);
+          return new Response(JSON.stringify({ 
+            success: false, 
+            message: 'SQL Fout tijdens setup', 
+            details: sqlError.message 
+          }), { status: 500, headers: corsHeaders });
+        }
       }
 
-      const body = await request.json() as any;
+      // De overige endpoints verwachten een JSON body
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch (e) {
+        // Alleen een error als we echt data nodig hebben
+        if (url.pathname !== '/health' && url.pathname !== '/setup-db') {
+           return new Response(JSON.stringify({ message: 'Ongeldige JSON body' }), { status: 400, headers: corsHeaders });
+        }
+      }
 
       if (url.pathname === '/proxy-wp') {
         const { domain, auth, endpoint } = body;
@@ -151,6 +179,9 @@ export default {
     } catch (e: any) {
       console.error('Worker Error:', e);
       return new Response(JSON.stringify({ message: 'Database/Worker Fout', details: e.message }), { status: 500, headers: corsHeaders });
+    } finally {
+      // In sommige omgevingen is het beter de connectie expliciet te sluiten,
+      // maar in Workers gebeurt dit meestal automatisch bij het einde van de fetch.
     }
   }
 };
